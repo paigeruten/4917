@@ -1,183 +1,302 @@
 #!/usr/local/bin/ruby
 
-# Take an operand, return its type and extracted info
-def parse_op(want, op, line_no)
-  want << :symbol if want.include? :number
+module FourNineOneSeven
+  extend self
 
-  if op.nil?
-    fail "operand missing. (line #{line_no})"
+  class AssemblyError < StandardError; end
+  class AssemblyOperandError < AssemblyError; end
+  class AssemblySyntaxError < AssemblyError; end
+  class AssemblyOverflowError < AssemblyError; end
+  class AssemblyUndefinedSymbol < AssemblyError; end
+
+  module Opcode
+    HALT = 0
+    ADD = 1
+    SUB = 2
+    INC_R0 = 3
+    INC_R1 = 4
+    DEC_R0 = 5
+    DEC_R1 = 6
+    BELL = 7
+    PRINT = 8
+    LOAD_R0 = 9
+    LOAD_R1 = 10
+    STORE_R0 = 11
+    STORE_R1 = 12
+    JUMP = 13
+    JUMP_ZERO = 14
+    JUMP_NOT_ZERO = 15
   end
 
-  if op =~ /^%[rR]([01])$/
-    oper = [:register, $1.to_i]
-  elsif op =~ /^\$(\d+)$/
-    number = $1.to_i
-    if number > 15
-      fail "operand '#{op}' is too large for 4-bit machine. (line #{line_no})"
+  class Program < Array
+    attr_reader :code_index, :data_index, :size
+
+    def initialize(size)
+      @code_index = 0
+      @data_index = size - 1
+      @symbols = {}
+      @size = size
+
+      super(@size, 0)
     end
-    oper = [:number, number]
-  elsif op =~ /^\$?(\w+)$/
-    oper = [:symbol, $1.to_sym]
-  else
-    fail "invalid operand '#{op}'. (line #{line_no})"
+
+    def insert_code(code)
+      if @code_index < @size
+        self[idx = @code_index] = code
+        @code_index += 1
+        idx
+      else
+        raise AssemblyOverflowError, "not enough memory for all of your program instructions"
+      end
+    end
+
+    def insert_data(data)
+      if @data_index >= 0
+        self[idx = @data_index] = data
+        @data_index -= 1
+        idx
+      else
+        raise AssemblyOverflowError, "not enough memory for all of your .data directives"
+      end
+    end
+
+    def add_symbol(symbol, value)
+      @symbols[symbol.to_sym] = value
+    end
+
+    def overlapping?
+      @code_index - 1 >= @data_index + 1
+    end
+
+    def overflowing?(max_value)
+      (self + @symbols.values).any? { |val| val.is_a?(Integer) && val > max_value }
+    end
+
+    def resolve_symbols
+      collect! do |cell|
+        if cell.is_a? Symbol
+          if value = @symbols[cell]
+            value
+          else
+            raise AssemblyUndefinedSymbolError, "trying to use undefined symbol or label"
+          end
+        else
+          cell
+        end
+      end
+    end
+
+    def to_s
+      join(" ")
+    end
   end
 
-  if want.include? oper.first
-    return oper
-  else
-    fail "instruction does not accept #{oper.first}s. (line #{line_no})"
+  class Instruction
+    attr_reader :name, :expected_operands, :assemble
+
+    def initialize(name, *expected_operands, &assemble)
+      @name = name.to_sym
+      @expected_operands = expected_operands
+      @assemble = assemble
+    end
   end
-end
 
-program = Array.new(16, 0)
-symbols = {}
+  class Operand
+    attr_reader :type, :value
 
-i = 0
-data_i = 15
-while gets
-  break if $_.nil?
+    def initialize(type, value)
+      @type = type
+      @value = value
+    end
 
-  line = $_.sub(/#.*$/, '').strip
+    def is_expected?(expected_operand)
+      expected_operand == :register_or_number || expected_operand == self.type
+    end
 
-  next if line.empty?
+    def self.parse(op)
+      case op
+      when /^%[rR]([01])$/
+        Operand.new(:register, $1.to_i)
+      when /^\$(\d+)$/
+        Operand.new(:number, $1.to_i)
+      when /^\$?(\w+)$/
+        Operand.new(:number, $1.to_sym)
+      else
+        raise AssemblySyntaxError, "syntax error, a register or other operand may be misspelled"
+      end
+    end
+  end
 
-  if line[0] == '.'
-    if line =~ /^\.data\s+(\w+)\s*,\s*(\d+)$/
-      symbol = $1.to_sym
-      data = $2.to_i
+  class Assembler
+    BYTE_LENGTH = 4
+    BYTE_LIMIT = 2 ** BYTE_LENGTH - 1
+    MEMORY_LENGTH = 16
 
-      if data > 15
-        fail "data is too large for a 4-bit machine. (line #$.)"
+    def self.instruction(name, *expected_operands)
+      if name.is_a? Hash
+        opcode = name.values.first
+        name = name.keys.first
+        assemble = lambda { |*| opcode }
       end
 
-      program[data_i] = data
-      symbols[symbol] = data_i
-      data_i -= 1
-    else
-      fail "invalid assembler directive. (line #$.)"
-    end
-
-    next
-  end
-
-  if line =~ /^(\w+):$/
-    symbols[$1.to_sym] = i
-
-    next
-  end
-
-  instruct, *operands = line.split(/[\s,]+/)
-
-  operand = operands[0]
-  operand2 = operands[1]
-
-  instruction = instruct.downcase.to_sym
-
-  case instruction
-  when :halt
-    program[i] = 0
-    i += 1
-  when :add
-    program[i] = 1
-    i += 1
-  when :sub
-    program[i] = 2
-    i += 1
-  when :inc
-    _, r = parse_op([:register], operand, $.)
-
-    if r == 0
-      program[i] = 3
-      i += 1
-    elsif r == 1
-      program[i] = 4
-      i += 1
-    end
-  when :dec
-    _, r = parse_op([:register], operand, $.)
-
-    if r == 0
-      program[i] = 5
-      i += 1
-    elsif r == 1
-      program[i] = 6
-      i += 1
-    end
-  when :bell
-    program[i] = 7
-    i += 1
-  when :prnt
-    type, info = parse_op([:register, :number], operand, $.)
-
-    if type == :register
-      program[i] = (info == 0) ? 11 : 12
-      i += 1
-      program[i] = i + 2
-      i += 1
-      program[i] = 8
-      i += 1
-      program[i] = 0
-      i += 1
-    else
-      program[i] = 8
-      i += 1
-      program[i] = info
-      i += 1
-    end
-  when :mov
-    type1, info1 = parse_op([:register, :number], operand, $.)
-    type2, info2 = parse_op((type1 == :register) ? [:number] : [:register], operand2, $.)
-
-    if type1 == :register
-      program[i] = 11 + info1
-      i += 1
-      program[i] = info2
-      i += 1
-    else
-      program[i] = 9 + info2
-      i += 1
-      program[i] = info1
-      i += 1
-    end
-  when :jmp, :jz, :jnz
-    _, value = parse_op([:number], operand, $.)
-
-    program[i] = { :jmp => 13, :jz => 14, :jnz => 15 }[instruction]
-    i += 1
-    program[i] = value
-    i += 1
-  else
-    fail "invalid instruction '#{instruction}'. (line #$.)"
-  end
-end
-
-if program.length != 16
-  fail "program is #{program.length-16} bytes too large."
-end
-
-if i - 1 >= data_i + 1
-  fail "data and text sections are overlapping."
-end
-
-program.collect! do |data|
-  if data.is_a? Symbol
-    if value = symbols[data]
-      if value > 15
-        fail "symbol '#{data}' resolves to value too large for a 4-bit machine."
+      if expected_operands.last.is_a? Hash
+        assemble = expected_operands.pop[:assemble]
       end
-    else
-      fail "undefined symbol '#{data}'."
+
+      (@@instructions ||= []) << Instruction.new(name, *expected_operands, &assemble)
     end
-  else
-    value = data
+
+    instruction :halt => Opcode::HALT
+    instruction :add => Opcode::ADD
+    instruction :sub => Opcode::SUB
+    instruction :inc, :register, :assemble => lambda { |reg, _|
+      if reg.value == 0
+        Opcode::INC_R0
+      elsif reg.value == 1
+        Opcode::INC_R1
+      end
+    }
+    instruction :dec, :register, :assemble => lambda { |reg, _|
+      if reg.value == 0
+        Opcode::DEC_R0
+      elsif reg.value == 1
+        Opcode::DEC_R1
+      end
+    }
+    instruction :bell => Opcode::BELL
+    instruction :prnt, :register_or_number, :assemble => lambda { |op, prog|
+      if op.type == :number
+        [Opcode::PRINT, op.value]
+      else
+        if op.value == 0
+          store_op = Opcode::STORE_R0
+        elsif op.value == 1
+          store_op = Opcode::STORE_R1
+        end
+        [store_op, prog.code_index + 3, Opcode::PRINT, 0]
+      end
+    }
+    instruction :mov, :register_or_number, :register_or_number, :assemble => lambda { |src, dest, _|
+      if src.type == dest.type
+        raise AssemblyOperandError, "operands to mov can't both be #{src.type}s"
+      end
+
+      if src.type == :register
+        if src.value == 0
+          [Opcode::STORE_R0, dest.value]
+        elsif src.value == 1
+          [Opcode::STORE_R1, dest.value]
+        end
+      else
+        if dest.value == 0
+          [Opcode::LOAD_R0, src.value]
+        elsif dest.value == 1
+          [Opcode::LOAD_R1, src.value]
+        end
+      end
+    }
+    instruction :jmp, :number, :assemble => lambda { |target, _| [Opcode::JUMP, target.value] }
+    instruction :jz, :number, :assemble => lambda { |target, _| [Opcode::JUMP_ZERO, target.value] }
+    instruction :jnz, :number, :assemble => lambda { |target, _| [Opcode::JUMP_NOT_ZERO, target.value] }
+
+    def initialize(source)
+      @source = source
+      @program = Program.new(MEMORY_LENGTH)
+    end
+
+    def assemble
+      line_num = 0
+      @source.lines.each.with_index do |line, line_num|
+        command = parse_line(line)
+
+        case command[:type]
+        when :empty
+          next
+        when :data
+          mem_location = @program.insert_data(command[:data])
+          @program.add_symbol(command[:symbol], mem_location)
+        when :label
+          @program.add_symbol(command[:label], @program.code_index)
+        when :instruction
+          if instruction = @@instructions.find { |instruct| instruct.name == command[:name] }
+            operands = command[:operands].map { |op| Operand.parse(op) }
+
+            assemble_instruction(instruction, *operands)
+          else
+            raise AssemblySyntaxError, "syntax error, an instruction may be misspelled"
+          end
+        end
+
+        check_for_errors
+      end
+
+      @program.resolve_symbols
+      @program
+    rescue AssemblyError => e
+      puts "#{e.class}:#{line_num + 1}: #{e.message}"
+      exit
+    end
+
+    def parse_line(line)
+      line = line.sub(/#.*$/, '').strip
+
+      if line.empty?
+        { :type => :empty }
+      elsif line[0] == '.' and line =~ /^\.data\s+(\w+)\s*,\s*(\d+)$/
+        { :type => :data, :symbol => $1.to_sym, :data => $2.to_i }
+      elsif line =~ /^(\w+):$/
+        { :type => :label, :label => $1.to_sym }
+      else
+        instruct, *operands = line.split(/[\s,]+/)
+        { :type => :instruction, :name => instruct.to_sym, :operands => operands }
+      end
+    end
+
+    def assemble_instruction(instruction, *operands)
+      if instruction.expected_operands.length != operands.length
+        raise AssemblyOperandError, "#{instruction.name} expects #{instruction.expected_operands.length} operands, got #{operands.length}"
+      end
+
+      operands.each.with_index do |operand, idx|
+        if !operand.is_expected?(instruction.expected_operands[idx])
+          raise AssemblyOperandError, "#{instruction.name} expects a #{expected_operands[idx]} for operand #{idx + 1}"
+        end
+      end
+
+      Array(instruction.assemble.call(*operands, @program)).each do |code|
+        @program.insert_code(code)
+      end
+    end
+
+    def check_for_errors
+      if @program.overlapping?
+        raise AssemblyOverflowError, "code and data sections are overlapping"
+      end
+
+      if @program.overflowing?(BYTE_LIMIT)
+        raise AssemblyOverflowError, "used a value outside of machine's range (0..#{BYTE_LIMIT})"
+      end
+    end
   end
 
-  value
+  def assemble(infile, outfile)
+    if infile
+      source = File.read(infile)
+    else
+      source = STDIN.read
+    end
+
+    assembler = Assembler.new(source)
+    program = assembler.assemble
+
+    File.open(outfile, "w") do |f|
+      f << program.to_s
+    end
+  end
 end
 
-prog = program.join ' '
+if __FILE__ == $0
+  infile, outfile = ARGV
 
-File.open("out.4", "w") do |f|
-  f << prog
+  FourNineOneSeven.assemble(infile, outfile || "out.4")
 end
-
