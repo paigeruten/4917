@@ -1,0 +1,216 @@
+         _________
+        /  i.am  /|
+       /  4917  /     <- it's a chip
+      /___yep__/
+      ||||||||||
+
+ 4917 is a little computer. It is so small
+ that hardly anybody knows it's there. It
+ ran in a marathon, and nobody even knew
+ it came in 1st. Nobody but me. That was
+ when I decided to take it under my wing.
+ It now has its own assembler, emulator,
+ and github page!!
+
+--- why?
+
+ Because it's fun and magic.
+
+--- architecture
+
+ There is a nice description here:
+
+ https://wiki.cse.unsw.edu.au/cs1917cgi/08s1/4719_Microprocessor
+
+--- emulator
+
+ Use it like this:
+
+     $ ./4em
+
+ Or this:
+
+     $ ./4em out.4
+
+ Where out.4 is the file containing
+ the program. With no arguments, it
+ takes the program from stdin. The
+ program should be 16 or fewer
+ numbers separated by whitespace.
+ The numbers should be positive
+ integers below 16 represented in
+ base 10.
+
+ The "Ring Bell" instruction will
+ cause it to print the audible
+ bell character. If you uncomment
+ something in 4em.c, you can make
+ it print out "DING" instead.
+
+--- assembler
+
+ The assembler is in Ruby. Yes, I
+ use many Regexps to "parse" the
+ assembly. Here's how to use it:
+
+     $ ruby 4as.rb
+
+ Oooor:
+
+     $ ruby 4as.rb yourasm.s
+
+ Where yourasm.s is your assembly
+ code. It will either give a
+ fairly specific error or it will
+ generate you an out.4 file with
+ the assembled "machine code".
+
+--- syntax
+
+ It's based on AT&T syntax.
+
+ The instructions are halt, add,
+ sub, inc, dec, bell, prnt, mov,
+ jmp, jz, and jnz.
+
+ halt stops the program.
+
+ add updates %r0 with the result
+ of %r0 + %r1. It takes no
+ operands.
+
+ sub updates %r0 with the result
+ of %r0 - %r1. No operands here
+ either.
+
+ inc increments its operand,
+ which must be a register.
+
+ dec is the same but decrements.
+
+ bell just rings a bell. Yay!
+
+ prnt prints its operand, a
+ number, to the screen. It also
+ takes a register, which is a
+ funny story (see below).
+
+ mov moves a register to a
+ memory cell or a memory cell
+ to a register.
+
+ jmp jumps unconditionally.
+
+ jz jumps if %r0 == 0.
+
+ jnz jumps if %r0 != 0.
+
+ Labels may be used in place
+ of any operand that expects
+ a number. Labels used in this
+ way may be preceded with a
+ dollar sign or not, your
+ choice. I would only leave it
+ off on jump instructions.
+
+ You can define a label by
+ placing it in the midst of
+ your code on its own line
+ followed by a colon, just
+ like you'd expect.
+
+ There is only one valid
+ assembler directive, which
+ is my own made-up .data
+ directive. It looks like
+ this:
+
+     .data my_number, 12
+
+ This tells the assembler
+ to set the last memory
+ cell (#15) to 12, and to
+ create a label/symbol
+ called my_number which
+ will be replaced with
+ the value's memory
+ address (15). The second
+ .data directive will use
+ cell #14, and keep going
+ down, closer and closer
+ to your code. Make sure
+ they don't collide!
+
+--- printing a register
+
+ Using a register as an
+ operand to the prnt
+ instruction is special.
+ It actually generates
+ TWO instructions! Oh
+ no! I probably broke
+ the one big rule of
+ assembly, that each
+ assembly instruction
+ shall correspond with
+ one (1) machine code
+ instruction only. Is
+ that a rule? It seems
+ like it should be.
+
+ So printing the value
+ of a register takes 4
+ whole bytes of space.
+ That's a quarter of
+ the whole memory. The
+ reason it takes two
+ instructions is that
+ the prnt instruction
+ only prints the exact
+ number that comes
+ after it. There is no
+ indirection. To print
+ something, you must
+ mov it to the second
+ byte of the prnt
+ instruction itself,
+ and then have the
+ prnt instruction
+ called.
+
+ So to simplify the
+ process of writing
+ self-modifying
+ code, I made this
+ instruction as
+ a bit of a
+ shortcut.
+
+ So there.
+
+--- see ya
+
+ I must go
+ now, as
+ I am
+ descend-
+ ing into
+ a black
+ hole of
+ docum-
+ entat-
+ ion. I
+ hope I
+ will
+ not
+ write
+ so
+ much
+ on
+ the
+ ot-
+ her
+ ..
+ .
+ ~
+
