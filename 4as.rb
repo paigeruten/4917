@@ -43,9 +43,108 @@ module FourNineOneSeven
     end
   end
 
+  class Program < Array
+    attr_reader :code_index, :data_index, :size
+
+    def initialize(size)
+      @code_index = 0
+      @data_index = size - 1
+      @symbols = {}
+      @size = size
+
+      super(@size, 0)
+    end
+
+    def insert_code(code)
+      if @code_index < @size
+        self[idx = @code_index] = code
+        @code_index += 1
+        idx
+      else
+        raise AssemblyOverflowError, "not enough memory for all of your program instructions"
+      end
+    end
+
+    def insert_data(data)
+      if @data_index >= 0
+        self[idx = @data_index] = data
+        @data_index -= 1
+        idx
+      else
+        raise AssemblyOverflowError, "not enough memory for all of your .data directives"
+      end
+    end
+
+    def add_symbol(symbol, value)
+      @symbols[symbol.to_sym] = value
+    end
+
+    def overlapping?
+      @code_index - 1 >= @data_index + 1
+    end
+
+    def overflowing?(max_value)
+      (self + @symbols.values).any? { |val| val.is_a?(Integer) && val > max_value }
+    end
+
+    def resolve_symbols
+      collect! do |cell|
+        if cell.is_a? Symbol
+          if value = @symbols[cell]
+            value
+          else
+            raise AssemblyUndefinedSymbolError, "trying to use undefined symbol or label"
+          end
+        else
+          cell
+        end
+      end
+    end
+
+    def to_s
+      join(" ")
+    end
+  end
+
+  class Instruction
+    attr_reader :name, :expected_operands, :assemble
+
+    def initialize(name, *expected_operands, &assemble)
+      @name = name.to_sym
+      @expected_operands = expected_operands
+      @assemble = assemble
+    end
+  end
+
+  class Operand
+    attr_reader :type, :value
+
+    def initialize(type, value)
+      @type = type
+      @value = value
+    end
+
+    def is_expected?(expected_operand)
+      expected_operand == :register_or_number || expected_operand == self.type
+    end
+
+    def self.parse(op)
+      case op
+      when /^%[rR]([01])$/
+        Operand.new(:register, $1.to_i)
+      when /^\$(\d+)$/
+        Operand.new(:number, $1.to_i)
+      when /^\$?(\w+)$/
+        Operand.new(:number, $1.to_sym)
+      else
+        raise AssemblySyntaxError, "syntax error, a register or other operand may be misspelled"
+      end
+    end
+  end
+
   class Assembler
     BYTE_LENGTH = 4
-    BYTE_LIMIT = 2 ** BYTE_LENGTH - 1
+    BYTE_LIMIT = (1 << BYTE_LENGTH) - 1
     MEMORY_LENGTH = 16
 
     def self.instruction(name, *expected_operands)
@@ -191,105 +290,6 @@ module FourNineOneSeven
 
       if @program.overflowing?(BYTE_LIMIT)
         raise AssemblyOverflowError, "used a value outside of machine's range (0..#{BYTE_LIMIT})"
-      end
-    end
-  end
-
-  class Program < Array
-    attr_reader :code_index, :data_index, :size
-
-    def initialize(size)
-      @code_index = 0
-      @data_index = size - 1
-      @symbols = {}
-      @size = size
-
-      super(@size, 0)
-    end
-
-    def insert_code(code)
-      if @code_index < @size
-        self[idx = @code_index] = code
-        @code_index += 1
-        idx
-      else
-        raise AssemblyOverflowError, "not enough memory for all of your program instructions"
-      end
-    end
-
-    def insert_data(data)
-      if @data_index >= 0
-        self[idx = @data_index] = data
-        @data_index -= 1
-        idx
-      else
-        raise AssemblyOverflowError, "not enough memory for all of your .data directives"
-      end
-    end
-
-    def add_symbol(symbol, value)
-      @symbols[symbol.to_sym] = value
-    end
-
-    def overlapping?
-      @code_index - 1 >= @data_index + 1
-    end
-
-    def overflowing?(max_value)
-      (self + @symbols.values).any? { |val| val.is_a?(Integer) && val > max_value }
-    end
-
-    def resolve_symbols
-      collect! do |cell|
-        if cell.is_a? Symbol
-          if value = @symbols[cell]
-            value
-          else
-            raise AssemblyUndefinedSymbolError, "trying to use undefined symbol or label"
-          end
-        else
-          cell
-        end
-      end
-    end
-
-    def to_s
-      join(" ")
-    end
-  end
-
-  class Instruction
-    attr_reader :name, :expected_operands, :assemble
-
-    def initialize(name, *expected_operands, &assemble)
-      @name = name.to_sym
-      @expected_operands = expected_operands
-      @assemble = assemble
-    end
-  end
-
-  class Operand
-    attr_reader :type, :value
-
-    def initialize(type, value)
-      @type = type
-      @value = value
-    end
-
-    def is_expected?(expected_operand)
-      expected_operand == :register_or_number || expected_operand == self.type
-    end
-
-    def self.parse(op)
-      case op
-      when /^%[rR]([01])$/
-        Operand.new(:register, $1.to_i)
-      when /^\$(\d+)$/
-        Operand.new(:number, $1.to_i)
-      when /^\$?(\w+)$/
-        Operand.new(:number, $1.to_sym)
-      else
-        raise AssemblySyntaxError, "syntax error, a register or other operand may be misspelled"
       end
     end
   end

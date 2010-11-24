@@ -3,40 +3,38 @@
 #include <string.h>
 #include <ctype.h>
 
+#define BYTE_LENGTH 4
+#define BYTE_LIMIT ((1 << BYTE_LENGTH) - 1)
+#define MEMORY_LENGTH 16
+
+#define TRUNCATE_BYTE(x) ((x) % (BYTE_LIMIT + 1))
+
 #define I_HALT 0
-#define I_ADD  1
-#define I_SUB  2
-#define I_INC0 3
-#define I_INC1 4
-#define I_DEC0 5
-#define I_DEC1 6
+#define I_ADD 1
+#define I_SUB 2
+#define I_INC_R0 3
+#define I_INC_R1 4
+#define I_DEC_R0 5
+#define I_DEC_R1 6
 #define I_BELL 7
-#define I_PRNT 8
-#define I_LD0  9
-#define I_LD1  10
-#define I_ST0  11
-#define I_ST1  12
-#define I_JMP  13
-#define I_JZ   14
-#define I_JNZ  15
+#define I_PRINT 8
+#define I_LOAD_R0 9
+#define I_LOAD_R1 10
+#define I_STORE_0 11
+#define I_STORE_1 12
+#define I_JUMP 13
+#define I_JUMP_ZERO 14
+#define I_JUMP_NOT_ZERO 15
 
 // if defined, print "DING" instead of actually ringing a bell
 //#define FAKE_BELL
 
-int main(int argc, char *argv[]) {
-  int ip;
-  int is;
-  int r0;
-  int r1;
-  int data;
-  char memory[16];
-  int mp;
+void load_program(FILE *in, char *memory);
+void run_program(char *memory);
 
+int main(int argc, char *argv[]) {
+  char program[MEMORY_LENGTH];
   FILE *in = stdin;
-  char instruct[12];
-  int instruct_i;
-  int ch;
-  int i;
 
   if (argc == 2) {
     if ((in = fopen(argv[1], "r")) == NULL) {
@@ -48,34 +46,56 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  memset(memory, 0, sizeof(memory));
+  load_program(in, program);
+  run_program(program);
 
-  instruct_i = 0;
-  mp = 0;
+  if (in != stdin) {
+    fclose(in);
+  }
+
+  return 0;
+}
+
+void load_program(FILE *in, char *memory) {
+  char instruct[3];
+  int instruct_idx;
+  int memory_idx;
+  int ch;
+
+  memset(memory, 0, MEMORY_LENGTH);
+
+  instruct_idx = 0;
+  memory_idx = 0;
   while (ch = fgetc(in)) {
     if (isdigit(ch)) {
-      instruct[instruct_i++] = ch;
-    } else if (instruct_i > 0) {
-      if (mp == 16) {
+      instruct[instruct_idx++] = ch;
+
+      if (instruct_idx == sizeof(instruct)) {
+        fprintf(stderr, "Error: program contains codes too large for 4-bit machine\n");
+        fclose(in);
+        exit(1);
+      }
+    } else if (instruct_idx > 0) {
+      if (memory_idx == MEMORY_LENGTH) {
         fprintf(stderr, "Error: program too big\n");
         fclose(in);
         exit(1);
       }
 
-      instruct[instruct_i] = '\0';
-      memory[mp++] = atoi(instruct);
+      instruct[instruct_idx] = '\0';
+      memory[memory_idx++] = atoi(instruct);
 
-      if (memory[mp - 1] < 0) {
+      if (memory[memory_idx - 1] < 0) {
         fprintf(stderr, "Error: program contains negative instructions\n");
         fclose(in);
         exit(1);
-      } else if (memory[mp - 1] > 15) {
+      } else if (memory[memory_idx - 1] > BYTE_LIMIT) {
         fprintf(stderr, "Error: program contains instructions that are too large\n");
         fclose(in);
         exit(1);
       }
 
-      instruct_i = 0;
+      instruct_idx = 0;
     }
 
     if (ch == EOF) {
@@ -84,21 +104,24 @@ int main(int argc, char *argv[]) {
   }
 
   fclose(in);
+}
 
-  ip = 0;
-  is = 0;
-  r0 = 0;
-  r1 = 0;
+void run_program(char *memory) {
+  int ip = 0;
+  int is = 0;
+  int r0 = 0;
+  int r1 = 0;
+  int operand;
 
   do {
-    if (ip > 15) {
+    if (ip > BYTE_LIMIT) {
       is = 0;
     } else {
       is = memory[ip++];
     }
 
     if (is > 7) {
-      data = memory[ip++];
+      operand = memory[ip++];
     }
 
     switch (is) {
@@ -106,77 +129,74 @@ int main(int argc, char *argv[]) {
         break;
 
       case I_ADD:
-        r0 = (r0 + r1) % 16;
+        r0 = TRUNCATE_BYTE(r0 + r1);
         break;
 
       case I_SUB:
-        r0 = (r0 - r1) % 16;
+        r0 = TRUNCATE_BYTE(r0 - r1);
         break;
 
-      case I_INC0:
-        r0 = (r0 + 1) % 16;
+      case I_INC_R0:
+        r0 = TRUNCATE_BYTE(r0 + 1);
         break;
 
-      case I_INC1:
-        r1 = (r1 + 1) % 16;
+      case I_INC_R1:
+        r1 = TRUNCATE_BYTE(r1 + 1);
         break;
 
-      case I_DEC0:
-        r0 = (r0 - 1) % 16;
+      case I_DEC_R0:
+        r0 = TRUNCATE_BYTE(r0 - 1);
         break;
 
-      case I_DEC1:
-        r1 = (r1 - 1) % 16;
+      case I_DEC_R1:
+        r1 = TRUNCATE_BYTE(r1 - 1);
         break;
 
       case I_BELL:
         #ifdef FAKE_BELL
         printf("DING ");
         #else
-        putchar('\a');
+        printf("\a");
         #endif
         break;
 
-      case I_PRNT:
+      case I_PRINT:
         printf("%d ", memory[ip - 1]);
         break;
 
-      case I_LD0:
-        r0 = memory[data];
+      case I_LOAD_R0:
+        r0 = memory[operand];
         break;
 
-      case I_LD1:
-        r1 = memory[data];
+      case I_LOAD_R1:
+        r1 = memory[operand];
         break;
 
-      case I_ST0:
-        memory[data] = r0;
+      case I_STORE_0:
+        memory[operand] = r0;
         break;
 
-      case I_ST1:
-        memory[data] = r1;
+      case I_STORE_1:
+        memory[operand] = r1;
         break;
 
-      case I_JMP:
-        ip = data;
+      case I_JUMP:
+        ip = operand;
         break;
 
-      case I_JZ:
+      case I_JUMP_ZERO:
         if (r0 == 0) {
-          ip = data;
+          ip = operand;
         }
         break;
 
-      case I_JNZ:
+      case I_JUMP_NOT_ZERO:
         if (r0 != 0) {
-          ip = data;
+          ip = operand;
         }
         break;
     }
   } while (is != 0);
 
-  putchar('\n');
-
-  return 0;
+  printf("\n");
 }
-
